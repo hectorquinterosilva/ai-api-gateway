@@ -186,12 +186,39 @@ def test_reactivate_not_found_returns_404(client):
 
 
 # ----------------------------
-# Health
+# Health (liveness / readiness)
 # ----------------------------
-def test_health(client):
+def test_health_liveness(client):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json() == {"status": "ok"}
+
+    r2 = client.get("/health/live")
+    assert r2.status_code == 200
+    assert r2.json() == {"status": "ok"}
+
+
+def test_health_ready_all_ok(client, monkeypatch):
+    import app.main as main_mod
+    monkeypatch.setattr(main_mod, "check_redis", lambda: True)
+
+    r = client.get("/health/ready")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "ok"
+    assert data["checks"]["database"] == "ok"
+    assert data["checks"]["redis"] == "ok"
+
+
+def test_health_ready_redis_down(client, monkeypatch):
+    import app.main as main_mod
+    monkeypatch.setattr(main_mod, "check_redis", lambda: False)
+
+    r = client.get("/health/ready")
+    assert r.status_code == 503
+    data = r.json()
+    assert data["status"] == "degraded"
+    assert data["checks"]["redis"] == "error"
 
 
 def test_root(client):
