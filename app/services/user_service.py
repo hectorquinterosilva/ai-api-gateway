@@ -1,124 +1,98 @@
-from app.exceptions.user_exceptions import (
-    EmailAlreadyExistsException,
-    UserNotFoundException
-)
 from sqlalchemy.orm import Session
 
+from app.exceptions.user_exceptions import (
+    EmailAlreadyExistsException,
+    UserNotFoundException,
+)
 from app.models.user import User
+from app.schemas.user import UserCreate, UserUpdate
 
 
-def create_user(
-    db: Session,
-    name: str,
-    email: str
-) -> User:
+# ----------------------------
+# Helpers internos
+# ----------------------------
+def _get_user_or_raise(db: Session, user_id: int) -> User:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise UserNotFoundException()
+    return user
 
-    existing_user = (
-        db.query(User)
-        .filter(User.email == email)
-        .first()
-    )
 
-    if existing_user:
-
+# ----------------------------
+# Operaciones
+# ----------------------------
+def create_user(db: Session, payload: UserCreate) -> User:
+    existing = db.query(User).filter(User.email == payload.email).first()
+    if existing:
         raise EmailAlreadyExistsException()
 
     user = User(
-        name=name,
-        email=email
+        name=payload.name,
+        email=payload.email,
+        role=payload.role,
+        tenant_id=payload.tenant_id,
     )
-
     db.add(user)
-
     db.commit()
-
     db.refresh(user)
-
     return user
 
 
 def get_users(
-    db: Session
-):
-
-    return db.query(User).all()
-
-
-def get_user_by_id(
     db: Session,
-    user_id: int
-):
+    skip: int = 0,
+    limit: int = 50,
+    include_inactive: bool = False,
+) -> tuple[list[User], int]:
+    query = db.query(User)
 
-    user = (
-        db.query(User)
-        .filter(User.id == user_id)
-        .first()
-    )
+    if not include_inactive:
+        query = query.filter(User.is_active.is_(True))
 
-    if not user:
+    total = query.count()
+    items = query.order_by(User.id).offset(skip).limit(limit).all()
+    return items, total
 
-        raise UserNotFoundException()
 
-    return user
+def get_user_by_id(db: Session, user_id: int) -> User:
+    return _get_user_or_raise(db, user_id)
 
-def update_user(
-    db: Session,
-    user_id: int,
-    name: str,
-    email: str
-):
 
-    user = (
-        db.query(User)
-        .filter(User.id == user_id)
-        .first()
-    )
+def update_user(db: Session, user_id: int, payload: UserUpdate) -> User:
+    user = _get_user_or_raise(db, user_id)
 
-    if not user:
+    data = payload.model_dump(exclude_unset=True)
 
-        raise UserNotFoundException()
-
-    existing_user = (
-        db.query(User)
-        .filter(
-            User.email == email,
-            User.id != user_id
+    # Si cambia el email, validar unicidad (excluyendo al mismo usuario)
+    if "email" in data and data["email"] != user.email:
+        existing = (
+            db.query(User)
+            .filter(User.email == data["email"], User.id != user_id)
+            .first()
         )
-        .first()
-    )
+        if existing:
+            raise EmailAlreadyExistsException()
 
-    if existing_user:
-
-        raise EmailAlreadyExistsException()
-
-    user.name = name
-    user.email = email
+    for field, value in data.items():
+        setattr(user, field, value)
 
     db.commit()
-
     db.refresh(user)
-
     return user
 
-def delete_user(
-    db: Session,
-    user_id: int
-):
 
-    user = (
-        db.query(User)
-        .filter(User.id == user_id)
-        .first()
-    )
-
-    if not user:
-
-        raise UserNotFoundException()
-
-    db.delete(user)
-
+def delete_user(db: Session, user_id: int) -> User:
+    """Soft delete: marca is_active=False, no borra la fila."""
+    user = _get_user_or_raise(db, user_id)
+    user.is_active = False
     db.commit()
+    db.refresh(user)
+    return user
 
-    return {
-        "message": "User deleted successfully"
-    }
+
+def reactivate_user(db: Session, user_id: int) -> User:
+    user = _get_user_or_raise(db, user_id)
+    user.is_active = True
+    db.commit()
+    db.refresh(user)
+    return user
