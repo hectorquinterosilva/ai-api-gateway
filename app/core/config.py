@@ -12,13 +12,14 @@ class Settings(BaseSettings):
     ENV: str = "development"
 
     # ----------------------------
-    # PostgreSQL
+    # Database
     # ----------------------------
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5432
     POSTGRES_DB: str
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str
+    SQL_ECHO: bool = False
 
     # ----------------------------
     # Redis
