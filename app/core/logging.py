@@ -5,16 +5,24 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
 
-# Contextvar: el middleware lo setea en cada request
 request_id_ctx: ContextVar[str | None] = ContextVar("request_id", default=None)
 
-# Campos extra que el middleware inyecta en cada log
 _EXTRA_FIELDS = (
     "method",
     "path",
     "status_code",
     "duration_ms",
     "client_ip",
+)
+
+# Loggers que uvicorn/gunicorn crean y que hay que redirigir a JSON
+_OVERRIDE_LOGGERS = (
+    "uvicorn",
+    "uvicorn.error",
+    "uvicorn.access",
+    "gunicorn",
+    "gunicorn.error",
+    "gunicorn.access",
 )
 
 
@@ -44,18 +52,27 @@ class JsonFormatter(logging.Formatter):
 
 
 def setup_logging(level: int = logging.INFO) -> None:
-    """Configura logging JSON para toda la app."""
-    root = logging.getLogger()
-    root.setLevel(level)
-
-    # Elimina handlers previos (evita duplicados al recargar)
-    for handler in root.handlers[:]:
-        root.removeHandler(handler)
-
+    """Configura logging JSON para toda la app, incluido uvicorn."""
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
+
+    # Root logger
+    root = logging.getLogger()
+    root.setLevel(level)
+    for h in root.handlers[:]:
+        root.removeHandler(h)
     root.addHandler(handler)
 
+    # Sobreescribe loggers de uvicorn/gunicorn para que usen el mismo handler
+    for name in _OVERRIDE_LOGGERS:
+        lg = logging.getLogger(name)
+        for h in lg.handlers[:]:
+            lg.removeHandler(h)
+        lg.handlers = [handler]
+        lg.propagate = False
+        lg.setLevel(level)
+
     # Silencia loggers ruidosos
-    for noisy in ("uvicorn.access", "sqlalchemy.engine"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy.engine.Engine").setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
