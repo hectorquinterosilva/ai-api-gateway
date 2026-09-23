@@ -4,14 +4,19 @@ from sqlalchemy import text
 
 from app.api.users import router as users_router
 from app.core.config import settings
+from app.core.logging import setup_logging
+from app.core.middleware import RequestIDMiddleware
 from app.core.redis import check_redis
 from app.db.session import engine
+
+setup_logging()
 
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
 )
 
+app.add_middleware(RequestIDMiddleware)
 app.include_router(users_router)
 
 
@@ -35,7 +40,6 @@ def _check_database() -> bool:
 
 @app.get("/health")
 def health():
-    """Liveness: la app está viva si responde."""
     return {"status": "ok"}
 
 
@@ -46,7 +50,6 @@ def health_live():
 
 @app.get("/health/ready")
 def health_ready():
-    """Readiness: verifica DB y Redis. 503 si algo falla."""
     checks = {
         "database": _check_database(),
         "redis": check_redis(),
