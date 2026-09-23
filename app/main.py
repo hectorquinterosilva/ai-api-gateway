@@ -1,10 +1,11 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.api.users import router as users_router
 from app.core.config import settings
 from app.core.logging import setup_logging
+from app.core.metrics import render_metrics
 from app.core.middleware import RequestIDMiddleware
 from app.core.redis import check_redis
 from app.db.session import engine
@@ -62,3 +63,9 @@ def health_ready():
     }
     status_code = 200 if all_ok else 503
     return JSONResponse(content=payload, status_code=status_code)
+
+
+@app.get("/metrics")
+def metrics():
+    payload, content_type = render_metrics()
+    return Response(content=payload, media_type=content_type)

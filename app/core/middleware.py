@@ -7,17 +7,14 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from app.core.logging import request_id_ctx
+from app.core.metrics import REQUEST_COUNT, REQUEST_LATENCY
 
 logger = logging.getLogger("app.request")
 
+_METRICS_EXCLUDED = ("/metrics",)
+
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
-    """
-    - Lee o genera X-Request-ID.
-    - Lo propaga al response.
-    - Loggea cada request/response como JSON con duración y status.
-    """
-
     async def dispatch(self, request: Request, call_next):
         request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
         token = request_id_ctx.set(request_id)
@@ -42,7 +39,8 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             request_id_ctx.reset(token)
             raise
 
-        duration_ms = (time.perf_counter() - start) * 1000
+        duration_s = time.perf_counter() - start
+        duration_ms = duration_s * 1000
         response.headers["X-Request-ID"] = request_id
 
         if response.status_code >= 500:
@@ -63,6 +61,17 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
                 "client_ip": client_ip,
             },
         )
+
+        if request.url.path not in _METRICS_EXCLUDED:
+            REQUEST_COUNT.labels(
+                method=request.method,
+                path=request.url.path,
+                status_code=response.status_code,
+            ).inc()
+            REQUEST_LATENCY.labels(
+                method=request.method,
+                path=request.url.path,
+            ).observe(duration_s)
 
         request_id_ctx.reset(token)
         return response

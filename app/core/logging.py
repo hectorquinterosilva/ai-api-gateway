@@ -72,7 +72,8 @@ def setup_logging(level: int = logging.INFO) -> None:
         lg.propagate = False
         lg.setLevel(level)
 
-    # Silencia loggers ruidosos
+    # Silencia loggers ruidosos (ya loggeamos nosotros con el middleware)
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.engine.Engine").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
