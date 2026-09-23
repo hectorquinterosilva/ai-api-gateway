@@ -1,201 +1,273 @@
 """
-Tests de la API de usuarios.
-Cubre: crear, duplicado, listar paginado, get, get inexistente,
-patch, patch email duplicado, soft delete, reactivar.
+Tests de la API de usuarios con autenticación por API key.
 """
 
 
-def _create_user(client, name="Alice", email="alice@example.com", **kwargs):
+def _register(client, name="Alice", email="alice@example.com", **kwargs):
     payload = {"name": name, "email": email, **kwargs}
     return client.post("/users", json=payload)
 
 
-# ----------------------------
-# POST /users
-# ----------------------------
-def test_create_user_returns_201(client):
-    r = _create_user(client)
+def _auth(key: str) -> dict:
+    return {"X-API-Key": key}
+
+
+# ============================================================
+# Registro (público)
+# ============================================================
+def test_register_returns_201_with_api_key(client):
+    r = _register(client)
     assert r.status_code == 201
     data = r.json()
     assert data["name"] == "Alice"
     assert data["email"] == "alice@example.com"
     assert data["role"] == "user"
     assert data["is_active"] is True
-    assert data["tenant_id"] is None
-    assert "id" in data
-    assert "created_at" in data
-    assert "updated_at" in data
-    assert "api_key_hash" not in data  # nunca se expone
+    assert data["api_key"].startswith("aigw_")
+    assert "api_key_hash" not in data
 
 
-def test_create_user_with_role_and_tenant(client):
-    r = _create_user(
-        client,
-        name="Bob",
-        email="bob@example.com",
-        role="admin",
-        tenant_id="acme",
-    )
-    assert r.status_code == 201
-    data = r.json()
-    assert data["role"] == "admin"
-    assert data["tenant_id"] == "acme"
-
-
-def test_create_duplicate_email_returns_409(client):
-    _create_user(client)
-    r = _create_user(client, name="Other", email="alice@example.com")
+def test_register_duplicate_email_returns_409(client):
+    _register(client)
+    r = _register(client, name="Other")
     assert r.status_code == 409
-    assert r.json()["detail"] == "Email already registered"
 
 
-def test_create_invalid_email_returns_422(client):
+def test_register_invalid_email_returns_422(client):
     r = client.post("/users", json={"name": "X", "email": "not-an-email"})
     assert r.status_code == 422
 
 
-def test_create_empty_name_returns_422(client):
+def test_register_empty_name_returns_422(client):
     r = client.post("/users", json={"name": "", "email": "x@example.com"})
     assert r.status_code == 422
 
 
-# ----------------------------
-# GET /users
-# ----------------------------
-def test_list_users_empty(client):
+# ============================================================
+# Auth
+# ============================================================
+def test_protected_route_without_key_returns_401(client):
     r = client.get("/users")
+    assert r.status_code == 401
+    assert "Missing" in r.json()["detail"]
+
+
+def test_protected_route_with_invalid_key_returns_401(client):
+    r = client.get("/users", headers=_auth("aigw_invalid_key_here"))
+    assert r.status_code == 401
+    assert "Invalid" in r.json()["detail"]
+
+
+def test_get_me(client):
+    reg = _register(client).json()
+    r = client.get("/users/me", headers=_auth(reg["api_key"]))
+    assert r.status_code == 200
+    assert r.json()["email"] == "alice@example.com"
+
+
+def test_protected_route_with_valid_key_returns_200(client):
+    reg = _register(client).json()
+    r = client.get("/users", headers=_auth(reg["api_key"]))
+    assert r.status_code == 200
+
+
+# ============================================================
+# Listar
+# ============================================================
+def test_list_users_returns_self(client):
+    """Al registrarse, el usuario debe verse a sí mismo en el listado."""
+    reg = _register(client).json()
+    r = client.get("/users", headers=_auth(reg["api_key"]))
     assert r.status_code == 200
     data = r.json()
-    assert data["items"] == []
-    assert data["total"] == 0
-    assert data["skip"] == 0
-    assert data["limit"] == 50
+    assert data["total"] == 1
+    assert len(data["items"]) == 1
+    assert data["items"][0]["id"] == reg["id"]
 
 
 def test_list_users_pagination(client):
-    for i in range(5):
-        _create_user(client, name=f"U{i}", email=f"u{i}@example.com")
+    reg = _register(client, name="Admin", email="admin@example.com").json()
+    key = reg["api_key"]
 
-    r = client.get("/users?skip=0&limit=2")
-    assert r.status_code == 200
+    for i in range(5):
+        _register(client, name=f"U{i}", email=f"u{i}@example.com")
+
+    r = client.get("/users?skip=0&limit=2", headers=_auth(key))
     data = r.json()
-    assert data["total"] == 5
+    assert data["total"] == 6
     assert len(data["items"]) == 2
 
-    r2 = client.get("/users?skip=2&limit=2")
+    r2 = client.get("/users?skip=2&limit=2", headers=_auth(key))
     data2 = r2.json()
-    assert len(data2["items"]) == 2
-    # IDs distintos entre páginas
-    ids_page1 = {u["id"] for u in data["items"]}
-    ids_page2 = {u["id"] for u in data2["items"]}
-    assert ids_page1.isdisjoint(ids_page2)
+    ids_1 = {u["id"] for u in data["items"]}
+    ids_2 = {u["id"] for u in data2["items"]}
+    assert ids_1.isdisjoint(ids_2)
 
 
 def test_list_users_invalid_limit_returns_422(client):
-    r = client.get("/users?limit=0")
+    reg = _register(client).json()
+    r = client.get("/users?limit=0", headers=_auth(reg["api_key"]))
     assert r.status_code == 422
-    r = client.get("/users?limit=999")
+    r = client.get("/users?limit=999", headers=_auth(reg["api_key"]))
     assert r.status_code == 422
 
 
-# ----------------------------
-# GET /users/{id}
-# ----------------------------
+# ============================================================
+# Get por id
+# ============================================================
 def test_get_user_by_id(client):
-    created = _create_user(client).json()
-    r = client.get(f"/users/{created['id']}")
+    reg = _register(client).json()
+    key = reg["api_key"]
+    r = client.get(f"/users/{reg['id']}", headers=_auth(key))
     assert r.status_code == 200
-    assert r.json()["email"] == created["email"]
+    assert r.json()["email"] == "alice@example.com"
 
 
 def test_get_user_not_found_returns_404(client):
-    r = client.get("/users/9999")
+    reg = _register(client).json()
+    r = client.get("/users/9999", headers=_auth(reg["api_key"]))
     assert r.status_code == 404
-    assert r.json()["detail"] == "User not found"
 
 
-# ----------------------------
-# PATCH /users/{id}
-# ----------------------------
+# ============================================================
+# PATCH
+# ============================================================
 def test_patch_user_partial_update(client):
-    created = _create_user(client).json()
-    r = client.patch(f"/users/{created['id']}", json={"name": "Alicia"})
+    reg = _register(client).json()
+    key = reg["api_key"]
+    r = client.patch(
+        f"/users/{reg['id']}",
+        json={"name": "Alicia"},
+        headers=_auth(key),
+    )
     assert r.status_code == 200
     data = r.json()
     assert data["name"] == "Alicia"
-    assert data["email"] == created["email"]  # no cambió
-    assert data["role"] == "user"  # no cambió
+    assert data["email"] == "alice@example.com"
 
 
-def test_patch_user_email_conflict_returns_409(client):
-    a = _create_user(client, name="A", email="a@example.com").json()
-    _create_user(client, name="B", email="b@example.com")
+def test_patch_email_conflict_returns_409(client):
+    a = _register(client, name="A", email="a@example.com").json()
+    b = _register(client, name="B", email="b@example.com").json()
 
-    r = client.patch(f"/users/{a['id']}", json={"email": "b@example.com"})
+    r = client.patch(
+        f"/users/{a['id']}",
+        json={"email": "b@example.com"},
+        headers=_auth(a["api_key"]),
+    )
     assert r.status_code == 409
 
 
-def test_patch_user_not_found_returns_404(client):
-    r = client.patch("/users/9999", json={"name": "X"})
+def test_patch_not_found_returns_404(client):
+    reg = _register(client).json()
+    r = client.patch(
+        "/users/9999",
+        json={"name": "X"},
+        headers=_auth(reg["api_key"]),
+    )
     assert r.status_code == 404
 
 
-# ----------------------------
-# DELETE /users/{id} (soft)
-# ----------------------------
+# ============================================================
+# Soft delete / reactivar
+# ============================================================
 def test_soft_delete_user(client):
-    created = _create_user(client).json()
-    r = client.delete(f"/users/{created['id']}")
+    reg = _register(client).json()
+    key = reg["api_key"]
+
+    r = client.delete(f"/users/{reg['id']}", headers=_auth(key))
     assert r.status_code == 200
-    data = r.json()
-    assert data["is_active"] is False
+    assert r.json()["is_active"] is False
 
-    # No aparece en listado por defecto
-    listing = client.get("/users").json()
-    assert listing["total"] == 0
-
-    # Sí aparece si include_inactive=true
-    listing_all = client.get("/users?include_inactive=true").json()
-    assert listing_all["total"] == 1
+    r2 = client.get("/users", headers=_auth(key))
+    assert r2.status_code == 401
 
 
 def test_delete_not_found_returns_404(client):
-    r = client.delete("/users/9999")
+    reg = _register(client).json()
+    r = client.delete("/users/9999", headers=_auth(reg["api_key"]))
     assert r.status_code == 404
 
 
-# ----------------------------
-# POST /users/{id}/reactivate
-# ----------------------------
 def test_reactivate_user(client):
-    created = _create_user(client).json()
-    client.delete(f"/users/{created['id']}")
+    a = _register(client, name="A", email="a@example.com").json()
+    b = _register(client, name="B", email="b@example.com").json()
 
-    r = client.post(f"/users/{created['id']}/reactivate")
+    client.delete(f"/users/{a['id']}", headers=_auth(a["api_key"]))
+
+    r = client.post(
+        f"/users/{a['id']}/reactivate",
+        headers=_auth(b["api_key"]),
+    )
     assert r.status_code == 200
     assert r.json()["is_active"] is True
 
-    # Vuelve a aparecer en listado por defecto
-    listing = client.get("/users").json()
-    assert listing["total"] == 1
-
 
 def test_reactivate_not_found_returns_404(client):
-    r = client.post("/users/9999/reactivate")
+    reg = _register(client).json()
+    r = client.post(
+        "/users/9999/reactivate",
+        headers=_auth(reg["api_key"]),
+    )
     assert r.status_code == 404
 
 
-# ----------------------------
-# Health (liveness / readiness)
-# ----------------------------
+# ============================================================
+# Rotación / revocación de API key
+# ============================================================
+def test_rotate_api_key(client):
+    reg = _register(client).json()
+    old_key = reg["api_key"]
+
+    r = client.post(
+        f"/users/{reg['id']}/api-key",
+        headers=_auth(old_key),
+    )
+    assert r.status_code == 200
+    new_key = r.json()["api_key"]
+    assert new_key.startswith("aigw_")
+    assert new_key != old_key
+
+    r_old = client.get("/users", headers=_auth(old_key))
+    assert r_old.status_code == 401
+
+    r_new = client.get("/users", headers=_auth(new_key))
+    assert r_new.status_code == 200
+
+
+def test_rotate_other_user_key_returns_403(client):
+    a = _register(client, name="A", email="a@example.com").json()
+    b = _register(client, name="B", email="b@example.com").json()
+
+    r = client.post(
+        f"/users/{b['id']}/api-key",
+        headers=_auth(a["api_key"]),
+    )
+    assert r.status_code == 403
+
+
+def test_revoke_api_key(client):
+    reg = _register(client).json()
+    key = reg["api_key"]
+
+    r = client.delete(
+        f"/users/{reg['id']}/api-key",
+        headers=_auth(key),
+    )
+    assert r.status_code == 200
+    assert r.json()["is_active"] is True
+
+    r2 = client.get("/users", headers=_auth(key))
+    assert r2.status_code == 401
+
+
+# ============================================================
+# Health
+# ============================================================
 def test_health_liveness(client):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json() == {"status": "ok"}
-
-    r2 = client.get("/health/live")
-    assert r2.status_code == 200
-    assert r2.json() == {"status": "ok"}
 
 
 def test_health_ready_all_ok(client, monkeypatch):

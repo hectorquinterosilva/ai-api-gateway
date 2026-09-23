@@ -54,3 +54,22 @@ class UserListResponse(BaseModel):
     total: int
     skip: int
     limit: int
+
+
+# ----------------------------
+# Salida: usuario recién creado con su API key
+# ----------------------------
+class UserCreateResponse(UserResponse):
+    """
+    Se devuelve una sola vez al crear el usuario.
+    La API key en claro no se puede recuperar después.
+    """
+    api_key: str
+
+
+# ----------------------------
+# Salida: rotación de API key
+# ----------------------------
+class ApiKeyResponse(BaseModel):
+    user_id: int
+    api_key: str

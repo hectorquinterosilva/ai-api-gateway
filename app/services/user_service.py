@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 
+from app.core.security import generate_api_key, hash_api_key
 from app.exceptions.user_exceptions import (
     EmailAlreadyExistsException,
     UserNotFoundException,
@@ -19,23 +20,30 @@ def _get_user_or_raise(db: Session, user_id: int) -> User:
 
 
 # ----------------------------
-# Operaciones
+# CRUD
 # ----------------------------
-def create_user(db: Session, payload: UserCreate) -> User:
+def create_user(db: Session, payload: UserCreate) -> tuple[User, str]:
+    """
+    Crea un usuario y le emite su primera API key.
+    Devuelve (user, plain_api_key). La key en claro solo se ve aquí.
+    """
     existing = db.query(User).filter(User.email == payload.email).first()
     if existing:
         raise EmailAlreadyExistsException()
+
+    plain_key = generate_api_key()
 
     user = User(
         name=payload.name,
         email=payload.email,
         role=payload.role,
         tenant_id=payload.tenant_id,
+        api_key_hash=hash_api_key(plain_key),
     )
     db.add(user)
     db.commit()
     db.refresh(user)
-    return user
+    return user, plain_key
 
 
 def get_users(
@@ -63,7 +71,6 @@ def update_user(db: Session, user_id: int, payload: UserUpdate) -> User:
 
     data = payload.model_dump(exclude_unset=True)
 
-    # Si cambia el email, validar unicidad (excluyendo al mismo usuario)
     if "email" in data and data["email"] != user.email:
         existing = (
             db.query(User)
@@ -93,6 +100,27 @@ def delete_user(db: Session, user_id: int) -> User:
 def reactivate_user(db: Session, user_id: int) -> User:
     user = _get_user_or_raise(db, user_id)
     user.is_active = True
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+# ----------------------------
+# API keys
+# ----------------------------
+def issue_api_key(db: Session, user_id: int) -> tuple[User, str]:
+    """Rota la API key. Devuelve (user, nueva_key_en_claro)."""
+    user = _get_user_or_raise(db, user_id)
+    plain_key = generate_api_key()
+    user.api_key_hash = hash_api_key(plain_key)
+    db.commit()
+    db.refresh(user)
+    return user, plain_key
+
+
+def revoke_api_key(db: Session, user_id: int) -> User:
+    user = _get_user_or_raise(db, user_id)
+    user.api_key_hash = None
     db.commit()
     db.refresh(user)
     return user
