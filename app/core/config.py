@@ -1,3 +1,5 @@
+from functools import lru_cache
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -7,10 +9,13 @@ class Settings(BaseSettings):
     # ----------------------------
     APP_NAME: str = "AI API Gateway"
     APP_VERSION: str = "0.1.0"
+    ENV: str = "development"
 
     # ----------------------------
     # PostgreSQL
     # ----------------------------
+    POSTGRES_HOST: str = "localhost"
+    POSTGRES_PORT: int = 5432
     POSTGRES_DB: str
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str
@@ -18,26 +23,37 @@ class Settings(BaseSettings):
     # ----------------------------
     # Redis
     # ----------------------------
-    REDIS_HOST: str
-    REDIS_PORT: int
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    REDIS_DB: int = 0
 
     # ----------------------------
-    # Computed Database URL
+    # Computed URLs
     # ----------------------------
     @property
     def DATABASE_URL(self) -> str:
         return (
-            f"postgresql://{self.POSTGRES_USER}:"
-            f"{self.POSTGRES_PASSWORD}"
-            f"@localhost:5432/"
+            f"postgresql+psycopg2://{self.POSTGRES_USER}:"
+            f"{self.POSTGRES_PASSWORD}@"
+            f"{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/"
             f"{self.POSTGRES_DB}"
         )
+
+    @property
+    def REDIS_URL(self) -> str:
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="ignore"
+        extra="ignore",
+        case_sensitive=True,
     )
 
 
-settings = Settings()
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+
+
+settings = get_settings()
