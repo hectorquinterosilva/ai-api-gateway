@@ -10,6 +10,17 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    env:
+      POSTGRES_DB: ai_gateway_test
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      REDIS_HOST: localhost
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      ENV: test
+
     steps:
       - uses: actions/checkout@v4
 
@@ -24,6 +35,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
+
+      - name: Create .env for tests
+        run: cp .env.example .env
 
       - name: Run tests
         run: pytest -v

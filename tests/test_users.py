@@ -272,6 +272,7 @@ def test_health_liveness(client):
 
 def test_health_ready_all_ok(client, monkeypatch):
     import app.main as main_mod
+    monkeypatch.setattr(main_mod, "_check_database", lambda: True)
     monkeypatch.setattr(main_mod, "check_redis", lambda: True)
 
     r = client.get("/health/ready")
@@ -284,13 +285,28 @@ def test_health_ready_all_ok(client, monkeypatch):
 
 def test_health_ready_redis_down(client, monkeypatch):
     import app.main as main_mod
+    monkeypatch.setattr(main_mod, "_check_database", lambda: True)
     monkeypatch.setattr(main_mod, "check_redis", lambda: False)
 
     r = client.get("/health/ready")
     assert r.status_code == 503
     data = r.json()
     assert data["status"] == "degraded"
+    assert data["checks"]["database"] == "ok"
     assert data["checks"]["redis"] == "error"
+
+
+def test_health_ready_database_down(client, monkeypatch):
+    import app.main as main_mod
+    monkeypatch.setattr(main_mod, "_check_database", lambda: False)
+    monkeypatch.setattr(main_mod, "check_redis", lambda: True)
+
+    r = client.get("/health/ready")
+    assert r.status_code == 503
+    data = r.json()
+    assert data["status"] == "degraded"
+    assert data["checks"]["database"] == "error"
+    assert data["checks"]["redis"] == "ok"
 
 
 def test_root(client):

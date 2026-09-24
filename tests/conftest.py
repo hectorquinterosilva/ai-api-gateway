@@ -1,13 +1,25 @@
 """
 Configuración de pytest: base de datos SQLite en memoria y cliente HTTP.
 """
+import os
+
+# Setear env vars ANTES de importar app, para que Settings() no falle
+os.environ.setdefault("POSTGRES_DB", "ai_gateway_test")
+os.environ.setdefault("POSTGRES_USER", "test")
+os.environ.setdefault("POSTGRES_PASSWORD", "test")
+os.environ.setdefault("POSTGRES_HOST", "localhost")
+os.environ.setdefault("POSTGRES_PORT", "5432")
+os.environ.setdefault("REDIS_HOST", "localhost")
+os.environ.setdefault("REDIS_PORT", "6379")
+os.environ.setdefault("REDIS_DB", "0")
+os.environ.setdefault("ENV", "test")
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-# Importar modelos para que se registren en Base.metadata
 import app.models  # noqa: F401
 
 from app.db.base import Base
@@ -20,10 +32,6 @@ TEST_DATABASE_URL = "sqlite:///:memory:"
 
 @pytest.fixture
 def db_session():
-    """
-    Crea una DB SQLite en memoria por test, con todas las tablas.
-    StaticPool mantiene una sola conexión para que :memory: persista.
-    """
     engine = create_engine(
         TEST_DATABASE_URL,
         connect_args={"check_same_thread": False},
@@ -48,9 +56,6 @@ def db_session():
 
 @pytest.fixture
 def client(db_session):
-    """
-    Cliente HTTP con la dependencia get_db sobreescrita por la sesión de test.
-    """
     def override_get_db():
         try:
             yield db_session
